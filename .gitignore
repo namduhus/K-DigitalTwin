@@ -1,0 +1,12 @@
+.env
+.venv/
+.DS_Store
+
+# 대용량 데이터 — 재다운로드 가능하거나 재생성 가능
+data/
+__pycache__/
+*.pyc
+docs/
+Reference/
+CLAUDE.md
+.claude/

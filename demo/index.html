@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>서울 골목 체감더위 — 디지털 트윈 (관악구 600m)</title>
+<script src="vendor/deck.gl.min.js"></script>
+<style>
+  :root{
+    --bg:#0d0f13; --panel:#161a21; --line:#2b313d;
+    --fg:#e8eaef; --dim:#98a1b0; --accent:#f0a800; --cool:#6aa8ff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);
+    font:14px/1.5 -apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}
+  #map{position:absolute;inset:0}
+  #map canvas{outline:none}
+  .panel{position:absolute;background:rgba(22,26,33,.93);border:1px solid var(--line);
+    border-radius:11px;backdrop-filter:blur(10px);box-shadow:0 6px 22px rgba(0,0,0,.45)}
+
+  #head{top:14px;left:14px;padding:12px 16px;max-width:420px}
+  #head h1{margin:0 0 4px;font-size:16px;letter-spacing:-.2px}
+  #head p{margin:0;color:var(--dim);font-size:12px}
+
+  #ctrl{bottom:14px;left:14px;right:14px;padding:11px 16px;display:flex;
+    align-items:center;gap:14px}
+  #ctrl input[type=range]{flex:1;min-width:120px;accent-color:var(--accent);height:22px}
+  #days{display:inline-flex;gap:6px;padding:2px;border:1px solid var(--line);border-radius:9px}
+  #clock{font-size:22px;font-weight:700;min-width:66px;font-variant-numeric:tabular-nums}
+  #suninfo{color:var(--dim);font-size:12px;min-width:158px;line-height:1.3}
+  button{background:#222834;color:var(--fg);border:1px solid var(--line);
+    border-radius:7px;padding:7px 12px;cursor:pointer;font-size:13px;white-space:nowrap}
+  button:hover{border-color:var(--accent)}
+  button.on{background:var(--accent);color:#171717;border-color:var(--accent);font-weight:600}
+
+  #side{top:14px;right:14px;width:322px;padding:13px 15px;display:none}
+  #side h2{margin:0 0 2px;font-size:14px}
+  #side .sub{color:var(--dim);font-size:11px;margin-bottom:6px}
+  #side table{width:100%;border-collapse:collapse;font-size:12px}
+  #side td{padding:2px 0;color:var(--dim)}
+  #side td:last-child{text-align:right;color:var(--fg);font-variant-numeric:tabular-nums}
+  #fan{width:292px;height:136px;margin:6px 0 4px;display:block}
+  #close{position:absolute;top:9px;right:11px;background:none;border:none;
+    color:var(--dim);font-size:16px;padding:2px 5px;line-height:1}
+
+  #legend{bottom:76px;left:14px;padding:9px 12px;font-size:11px;min-width:196px}
+  #bar{height:9px;border-radius:3px;margin:5px 0 3px}
+  #ticks{display:flex;justify-content:space-between;color:var(--dim);
+    font-variant-numeric:tabular-nums}
+
+  /* 태양·북 나침반 — 그림자 방향을 눈으로 대조하라고 둔다 */
+  #compass{bottom:76px;right:14px;padding:8px;width:104px;text-align:center}
+  #compass svg{display:block}
+  #compass .cap{color:var(--dim);font-size:10px;margin-top:2px}
+
+  #tip{position:absolute;pointer-events:none;z-index:9;display:none;
+    background:rgba(12,15,20,.94);border:1px solid var(--line);border-radius:7px;
+    padding:6px 9px;font-size:12px;line-height:1.45;white-space:nowrap;
+    font-variant-numeric:tabular-nums}
+  #tip b{color:var(--accent)}
+
+  .note{color:var(--dim);font-size:11px;line-height:1.45;margin-top:7px;
+    border-top:1px solid var(--line);padding-top:7px}
+  #loading{position:absolute;inset:0;display:grid;place-items:center;color:var(--dim)}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="tip"></div>
+<div id="loading">데이터 불러오는 중…</div>
+
+<div id="head" class="panel">
+  <h1>서울 골목 체감더위 — 관악구 600m</h1>
+  <p id="sub">불러오는 중…</p>
+</div>
+
+<div id="side" class="panel">
+  <button id="close">✕</button>
+  <h2 id="sideTitle">셀 정보</h2>
+  <div class="sub" id="sideSub"></div>
+  <canvas id="fan" width="584" height="272"></canvas>
+  <table id="attr"></table>
+  <div class="note" id="sideNote"></div>
+</div>
+
+<div id="legend" class="panel">
+  <div id="legLabel"></div>
+  <div id="bar"></div>
+  <div id="ticks"></div>
+  <div id="legNote" style="color:var(--dim);margin-top:4px"></div>
+</div>
+
+<div id="compass" class="panel">
+  <svg width="88" height="88" viewBox="0 0 88 88"></svg>
+  <div class="cap" id="compassCap"></div>
+</div>
+
+<div id="ctrl" class="panel">
+  <div id="clock">--시</div>
+  <div id="suninfo"></div>
+  <input id="slider" type="range" min="0" max="23" value="16" step="1">
+  <button id="play">▶ 재생</button>
+  <button id="shadow" class="on">그림자</button>
+  <button id="mode">편차</button>
+  <span id="days"></span>
+  <button id="toSeoul">서울 전체</button>
+  <button id="toStreet">골목</button>
+</div>
+
+<script>
+"use strict";
+
+// ════════════════════════════════════════════════════════════════════════
+//  좌표계 — MapView + METER_OFFSETS
+//
+//  ★ 이 조합이 아니면 화면이 검게 나온다. `METER_OFFSETS`는 **지리 뷰포트**에서만
+//    정의된다 — 원점을 경위도로 받아 미터 오프셋을 웹메르카토르 공통공간으로
+//    환산하기 때문이다. `OrbitView`는 `isGeospatial=false`라 그 환산이 성립하지
+//    않아 지오메트리가 화면 밖으로 날아간다 (에러는 안 난다. 그냥 사라진다).
+//    `build_demo.py`가 격자·건물을 원점 기준 미터 오프셋으로 내보내는 이유가
+//    바로 이 좌표계를 쓰기 위해서다.
+//
+//  ★ MapView를 쓰는 두 번째 이유 — **북쪽이 위**로 고정된다.
+//    태양 방위각(pvlib)이 화면 방향과 1:1로 대응해야 그림자를 검증할 수 있다.
+//    OrbitView의 rotationOrbit은 임의 회전이라 방위각과 대조가 안 된다.
+// ════════════════════════════════════════════════════════════════════════
+const {DeckGL, MapView, PolygonLayer, SolidPolygonLayer, PathLayer, BitmapLayer,
+       ScatterplotLayer,
+       COORDINATE_SYSTEM, LightingEffect, AmbientLight, DirectionalLight,
+       FlyToInterpolator} = deck;
+
+const HOT_C = 33.0;
+const HALF  = 300;        // 격자 창 반폭 (m) — build_demo.py HALF
+const PAD   = 620;        // 지면판 반폭 (m) — 창 밖 건물까지 덮는다
+
+let D = null, deckgl = null;
+let hour = 16, playing = false, timer = null, showShadow = true;
+
+// ── 날짜 (폭염일 / 평온일) ────────────────────────────────────────────────
+// ★ 두 날의 **편차 색 범위는 공통**이다. 날마다 자기 범위를 쓰면 두 지도가
+//   똑같이 진해 보여서 「폭염일에 격차가 벌어진다」가 사라진다 (fig8의 논지).
+//   반대로 **절대 기온은 날마다 자기 범위**를 쓴다 — 중위가 38.4 vs 27.4℃로
+//   11℃ 차이라 공통 범위에서는 평온일이 램프의 34%에 눌린다.
+let DAYS = null;          // days.json
+let dayKey = null;        // 현재 날
+const BYDAY = {};         // key → {D, DEV, MED, RANGE, OUT, OV}
+let mode = "dev", picked = null, hoverIdx = null, userMoved = false;
+
+// ── 전역 2D (서울 전체) ─────────────────────────────────────────────────
+// `scripts/build_overview.py`가 구운 **값 래스터** 24장. 색이 아니라 기온을
+// 8bit로 담고 있어서 뷰어가 램프를 입힌다 — 두 모드가 같은 이미지를 쓰고,
+// 동시각 편차는 `t − median[시각]`으로 공짜로 나온다.
+let OV = null;             // manifest
+let viewZoom = 0;          // LOD 판정용
+const ovCache = new Map(); // "day:mode:hour" → canvas (LRU)
+const OV_CACHE_MAX = 8;    // 1606×1046 캔버스 하나가 6.7 MB다 — 무한정 쌓지 않는다
+
+// 발표용 시점 고정 — ?hour=15&mode=hot&span=1500&pitch=40&bearing=0
+const Q = new URLSearchParams(location.search);
+if (Q.has("hour")) hour = Math.min(23, Math.max(0, +Q.get("hour") | 0));
+
+// ── 색 램프 ─────────────────────────────────────────────────────────────
+// 발산형 (RdBu 역순) — 편차 0을 중립색에 고정해 "평균보다 뜨겁다/시원하다"를 읽는다
+const DIVERGING = [[ 44, 92,163],[ 92,140,201],[158,192,225],[214,229,240],
+                   [246,246,246],[253,219,199],[244,165,130],[214, 96, 77],[165, 15, 21]];
+// 순차형 (YlOrRd) — 흑백 인쇄에서도 명도가 단조롭게 증가한다
+const SEQUENTIAL = [[255,255,204],[254,217,118],[254,178, 76],[253,141, 60],
+                    [252, 78, 42],[227, 26, 28],[177,  0, 38]];
+
+function lerpRamp(ramp, u){
+  if (!isFinite(u)) return [96,102,114];
+  u = Math.min(1, Math.max(0, u));
+  const x = u * (ramp.length - 1), i = Math.min(ramp.length - 2, Math.floor(x)), f = x - i;
+  const a = ramp[i], b = ramp[i + 1];
+  return [a[0] + (b[0]-a[0])*f, a[1] + (b[1]-a[1])*f, a[2] + (b[2]-a[2])*f];
+}
+const css = c => `rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;
+
+// ── 모드 정의 ───────────────────────────────────────────────────────────
+// ★ 색 범위는 **하루 전체로 한 번만** 잡는다. 시각마다 다시 잡으면 슬라이더를
+//   돌릴 때 색이 널뛰어 "시간에 따라 어떻게 변하는가"를 못 읽는다.
+const MODES = {
+  dev: {btn:"편차",     label:"창 중위 대비 편차", unit:"℃", ramp:DIVERGING,  diverging:true,
+        note:"같은 시각 창 안 옥외 셀 중위와의 차이", digits:2},
+  t:   {btn:"기온",     label:"기온 (절대)",       unit:"℃", ramp:SEQUENTIAL, diverging:false,
+        note:"하루 전체 P02–P98 · 날마다 범위가 다르다", digits:1, minSpan: 1.0},
+  hot: {btn:"33℃ 초과", label:"33℃ 초과 시간",     unit:"h", ramp:SEQUENTIAL, diverging:false,
+        note:"하루 누적 — 시각을 바꿔도 변하지 않는다", digits:1, static:true,
+        // ★ 평온일은 33℃를 아예 안 넘는다 (실측 범위 0.0~0.1h). 그 폭에 램프를
+        //   펴면 **잡음이 전체 색으로 증폭돼** 시원한 날이 알록달록해진다.
+        minSpan: 0.5},
+  unc: {btn:"불확실성", label:"80% 예측구간 폭",   unit:"℃", ramp:SEQUENTIAL, diverging:false,
+        note:"conformal 보정 후 q90 − q10", digits:1, minSpan: 0.4},
+};
+const ORDER = ["dev", "t", "hot", "unc"];
+
+let DEV = null;        // (셀, 시각) 창 중위 대비 편차
+let MED = null;        // (시각) 창 옥외 중위 — 편차를 절대기온으로 되돌릴 때 쓴다
+let RANGE = {};        // 모드별 [lo, hi]
+let OUT = [];          // 옥외 셀 인덱스
+
+const quantile = (sorted, p) => sorted.length
+  ? sorted[Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * p)))]
+  : NaN;
+
+function precompute(){
+  DEV = null; MED = null; RANGE = {}; OUT = [];
+  const n = D.cx.length, H = D.hours.length;
+
+  // ★ 건물 내부 셀(167/576)은 통계에서 뺀다.
+  //   보행자가 겪는 온도가 아니고, 화면에도 건물이 그 위를 덮는다.
+  OUT = [];
+  for (let i = 0; i < n; i++) if (!D.in_bld[i]) OUT.push(i);
+
+  MED = new Array(H);
+  for (let k = 0; k < H; k++){
+    const v = [];
+    for (const i of OUT){ const x = D.t[i][k]; if (x != null) v.push(x); }
+    v.sort((a,b) => a-b);
+    MED[k] = v.length ? (v.length % 2 ? v[(v.length-1)/2]
+                                      : (v[v.length/2-1] + v[v.length/2]) / 2) : null;
+  }
+
+  DEV = new Array(n);
+  for (let i = 0; i < n; i++){
+    DEV[i] = new Array(H);
+    for (let k = 0; k < H; k++)
+      DEV[i][k] = (D.t[i][k] == null || MED[k] == null) ? null : D.t[i][k] - MED[k];
+  }
+
+  // 범위 — 옥외 셀만, 하루 전체 P02/P98
+  const collect = f => {
+    const a = [];
+    for (const i of OUT) for (let k = 0; k < D.hours.length; k++){
+      const v = f(i, k); if (v != null && isFinite(v)) a.push(v);
+    }
+    return a.sort((x,y) => x-y);
+  };
+  const tAll = collect((i,k) => D.t[i][k]);
+  RANGE.t = [quantile(tAll, .02), quantile(tAll, .98)];
+
+  // 편차는 **0을 중심으로 대칭**이어야 중립색이 "평균과 같음"을 뜻한다.
+  //
+  // ★ 범위를 p99로 잡으면 안 된다. |편차| 분포가 0 근처에 몰려 있어서 대부분의
+  //   셀이 중립색에 붙어 **골목 간 차이가 안 보인다**. p90에서 자르고 그 밖은
+  //   클램프해 상위 10%를 포기하는 대신 나머지 90%의 대비를 얻는다.
+  //   ⚠️ 클램프 사실은 범례에 적는다 — 안 적으면 최댓값을 오독한다.
+  //
+  // ★★ 범위 자체는 여기서 정하지 않는다. **두 날 공통**이어야 하므로
+  //    `sharedDevRange()`가 모든 날을 보고 정한 뒤 각 날에 넣어 준다.
+  const dAbs = collect((i,k) => DEV[i][k] == null ? null : Math.abs(DEV[i][k]));
+  RANGE.devP90 = Math.max(.3, Math.round(quantile(dAbs, .90) * 10) / 10);
+  RANGE.dev = [-RANGE.devP90, RANGE.devP90];      // 임시 — 아래에서 공통값으로 덮는다
+
+  const hAll = collect((i,k) => k ? null : (D.hot[i] ? D.hot[i][0] : null));
+  RANGE.hot = [quantile(hAll, .02), quantile(hAll, .98)];
+
+  const uAll = collect((i,k) => (D.q90[i] && D.q90[i][k] != null)
+    ? D.q90[i][k] - D.q10[i][k] : null);
+  RANGE.unc = [quantile(uAll, .02), quantile(uAll, .98)];
+
+  // ★ 범례가 실측 클램프 비율을 직접 말하게 한다. 분위로 자른 범위를 그냥
+  //   "최소~최대"처럼 보여주면 밖으로 나간 셀을 읽는 사람이 알 수 없다.
+  for (const key of ORDER){
+    const [lo, hi] = RANGE[key];
+    const vals = collect((i,k) => key === "hot" ? (k ? null : (D.hot[i] ? D.hot[i][0] : null))
+                : key === "dev" ? DEV[i][k]
+                : key === "t"   ? D.t[i][k]
+                : (D.q90[i] && D.q90[i][k] != null ? D.q90[i][k] - D.q10[i][k] : null));
+    const out = vals.filter(v => v < lo || v > hi).length;
+    MODES[key].clamp = vals.length ? 100 * out / vals.length : 0;
+  }
+}
+
+// ★ 범위가 사실상 0인 모드는 색을 칠하지 않는다.
+//   0.1h 폭에 램프를 펴면 **없는 구조를 만들어 낸다** — 정확히 이 프로젝트가
+//   경계하는 종류의 거짓이다. 무채색으로 두고 범례가 이유를 말한다.
+function degenerate(m = mode){
+  const M = MODES[m], r = RANGE[m];
+  return !!(M.minSpan && r && (r[1] - r[0]) < M.minSpan);
+}
+
+function cellValue(i, k = hour){
+  if (D.in_bld[i]) return null;                       // 건물 내부 — 착색하지 않는다
+  if (mode === "dev") return DEV[i][k];
+  if (mode === "t")   return D.t[i][k];
+  if (mode === "hot") return D.hot[i] ? D.hot[i][0] : null;
+  return (D.q90[i] && D.q90[i][k] != null) ? D.q90[i][k] - D.q10[i][k] : null;
+}
+function cellColor(i){
+  const M = MODES[mode], [lo, hi] = RANGE[mode], v = cellValue(i);
+  if (v == null) return null;
+  if (degenerate()) return [96, 104, 118];       // 구조가 없다 — 만들어 내지 않는다
+  return lerpRamp(M.ramp, (v - lo) / (hi - lo));
+}
+
+// ── 전역 래스터 — 값 PNG에 램프를 입힌다 ────────────────────────────────
+//
+// 팔레트가 회색조(`palette[i] = (i,i,i)`)라 캔버스에서 읽은 **R 채널이 곧
+// 인덱스**다. 인덱스 0은 투명(서울 밖)이고 1..255가 기온을 담는다.
+//   v = vmin + (R − 1) / (levels − 1) × (vmax − vmin)
+//
+// ⚠️ 저장은 손실 없이(실제 min/max), 표시 클램프는 여기서 한다. 반대로 하면
+//    잘린 값 위에서 편차를 계산하게 돼 조용히 틀린다.
+const ovImages = new Map();               // "day:hour" → 디코드된 ImageData
+
+function ovLoad(h, key = dayKey){
+  const ck = `${key}:${h}`;
+  if (ovImages.has(ck)) return Promise.resolve(ovImages.get(ck));
+  const man = BYDAY[key] && BYDAY[key].OV;
+  if (!man) return Promise.reject(new Error(`overview manifest 없음: ${key}`));
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => {
+      const [w, hh] = man.size;
+      const c = document.createElement("canvas");
+      c.width = w; c.height = hh;
+      const g = c.getContext("2d", {willReadFrequently: true});
+      g.drawImage(img, 0, 0);
+      const d = g.getImageData(0, 0, w, hh);
+      ovImages.set(ck, d);
+      res(d);
+    };
+    img.onerror = () => rej(new Error(`overview ${ck}`));
+    img.src = `data/overview/${key}/v_${String(h).padStart(2, "0")}.png`;
+  });
+}
+
+function ovPaint(src, m){
+  const {vmin, vmax, levels} = OV.encode;
+  const [lo, hi] = OV.ranges[m];
+  const ramp = OV.ramps[m];
+  const off = m === "dev" ? OV.median[hour] : 0;
+  const scale = (vmax - vmin) / (levels - 1);
+
+  // 램프를 256단계 LUT로 미리 펴 둔다 — 픽셀마다 보간하면 168만 번이다
+  const lut = new Uint8Array(256 * 3);
+  for (let k = 0; k < 256; k++){
+    const c = lerpRamp(ramp, k / 255);
+    lut[k*3] = c[0]; lut[k*3+1] = c[1]; lut[k*3+2] = c[2];
+  }
+  const [w, hh] = OV.size;
+  const out = new ImageData(w, hh);
+  const s = src.data, o = out.data;
+  for (let i = 0; i < s.length; i += 4){
+    if (!s[i + 3]) continue;                       // 서울 밖
+    const v = vmin + (s[i] - 1) * scale - off;
+    let u = (v - lo) / (hi - lo);
+    u = u < 0 ? 0 : u > 1 ? 1 : u;                 // 표시 클램프
+    const k = (u * 255) | 0;
+    o[i] = lut[k*3]; o[i+1] = lut[k*3+1]; o[i+2] = lut[k*3+2]; o[i+3] = 255;
+  }
+  const c = document.createElement("canvas");
+  c.width = w; c.height = hh;
+  c.getContext("2d").putImageData(out, 0, 0);
+  return c;
+}
+
+function ovCanvas(){
+  if (!OV || !OV.ranges[mode]) return null;
+  const key = `${dayKey}:${mode}:${hour}`;
+  if (ovCache.has(key)) return ovCache.get(key);
+  const src = ovImages.get(`${dayKey}:${hour}`);
+  if (!src){                                        // 아직 안 받았다 — 받고 다시 그린다
+    ovLoad(hour).then(() => refresh()).catch(e => console.warn(e));
+    return null;
+  }
+  const c = ovPaint(src, mode);
+  ovCache.set(key, c);
+  while (ovCache.size > OV_CACHE_MAX) ovCache.delete(ovCache.keys().next().value);
+  return c;
+}
+
+// ── LOD — 줌에 따라 전역 래스터와 구역 3D를 교대한다 ────────────────────
+// ★ 하드 스위치를 쓰지 않는다. 줌 중간에 화면이 툭 바뀌면 「서울 전체 → 골목」이
+//   **연속된 하나의 장면**이라는 인상이 깨진다. 좁은 띠에서 교차 페이드한다.
+// ⚠️ 띠를 좁게 잡는다. 전환 중에는 **서로 다른 색 척도 두 개가 한 화면에** 있다 —
+//    전역 편차는 서울 중위 대비 ±1.8℃, 구역 편차는 창 중위 대비 ±0.6℃다.
+//    범례는 하나뿐이므로 이 구간이 길면 오독한다. 짧게 지나가게 하고,
+//    지나가는 동안에는 범례에 「전환 중」을 띄운다.
+const LOD_LO = 13.5, LOD_HI = 14.3;
+const lodMix = z => Math.min(1, Math.max(0, (z - LOD_LO) / (LOD_HI - LOD_LO)));
+const inDistrict = () => lodMix(viewZoom) >= 0.5;
+const inTransition = () => {
+  const m = lodMix(viewZoom);
+  return OV && m > 0.02 && m < 0.98;
+};
+
+// ── 조명 ────────────────────────────────────────────────────────────────
+// ★ `_SunLight` 대신 `DirectionalLight`에 방향을 직접 준다.
+//   `_SunLight`는 타임스탬프로 태양 위치를 **자기가 다시 계산**하는데, 우리는
+//   이미 pvlib(NREL SPA)로 24시각 방위·고도를 구해 뒀다 — **모델이 음영 피처를
+//   만들 때 쓴 것과 같은 값**이라 화면과 계산이 어긋나지 않는다.
+//
+//   방위각은 북기준 시계방향. deck.gl 공통공간은 x=동 / y=북 / z=위이고
+//   `direction`은 **빛이 나아가는 방향**이므로 태양을 향하는 벡터의 반대다.
+function sunDirection(az, el){
+  const A = az * Math.PI / 180, E = el * Math.PI / 180;
+  return [-Math.sin(A) * Math.cos(E), -Math.cos(A) * Math.cos(E), -Math.sin(E)];
+}
+// ★ 주변광 세기를 세 상태(주간·그림자끔·야간)에서 **똑같이 1.0으로 고정**한다.
+//   격자 색은 데이터고 범례가 그 색을 그대로 보여준다. 상태마다 주변광을 바꾸면
+//   같은 −0.4℃가 시각에 따라 다른 색으로 보여 **범례가 거짓이 된다**.
+//   격자 재질은 ambient 1.0 / diffuse 0.12라 색이 램프값 그대로 나오고,
+//   그림자는 조명이 아니라 `shadowColor` 합성이라 별개로 남는다.
+//
+// ★ 야간·그림자끔에도 **방향광을 하나 남긴다**. 주변광만 두면 모든 면이 같은
+//   밝기가 돼 건물이 납작한 실루엣으로 뭉개진다 (그림자만 끄고 싶었지
+//   입체감까지 끄려던 게 아니다).
+const AMBIENT = 1.0;
+function lighting(){
+  const s = D.sun[hour], night = s.el <= 0;
+  const ambient = new AmbientLight({color: [255,255,255], intensity: AMBIENT});
+
+  if (night){
+    const moon = new DirectionalLight({
+      color: [188, 202, 232], intensity: 0.62,
+      direction: sunDirection(315, 55),          // 북서 상공 고정 — 입체감용 보조광
+    });
+    return new LightingEffect({ambient, moon});
+  }
+  const sun = new DirectionalLight({
+    color: [255, 246, 226],
+    intensity: showShadow ? 1.45 : 1.15,
+    direction: sunDirection(s.az, s.el),
+    _shadow: showShadow,
+  });
+  const eff = new LightingEffect({ambient, sun});
+  eff.shadowColor = [0, 0, 0, 0.42];
+  return eff;
+}
+
+// ── 레이어 ──────────────────────────────────────────────────────────────
+const geo = {
+  coordinateSystem: COORDINATE_SYSTEM.METER_OFFSETS,
+  coordinateOrigin: null,       // 데이터 로드 후 채운다
+};
+
+// ★ 안정 참조 — `data` 배열과 accessor 함수를 **매 틱 새로 만들면 안 된다**.
+//   deck.gl은 프롭을 참조 비교하므로 새 함수가 들어오면 바뀐 줄 알고 지오메트리를
+//   다시 테셀레이션한다. 실측: 시각 전환 1회마다 `getPolygon`이 8,586회 재호출
+//   (건물 2,862동). M4 Pro에서는 16.7ms에 묻히지만 발표용 노트북에서는 남지 않는다.
+//   시각·모드에 따라 실제로 바뀌는 것은 격자 `getFillColor` 하나뿐이고,
+//   그건 `updateTriggers`로 명시해 갱신한다.
+const A = {};
+function buildAccessors(){
+  const half = D.cell / 2;
+  A.gridIdx    = D.cx.map((_, i) => i);
+  A.bldIdx     = D.buildings.poly.map((_, i) => i);
+  A.groundData = [[[-PAD,-PAD], [PAD,-PAD], [PAD,PAD], [-PAD,PAD]]];
+  A.frameData  = [[[-HALF,-HALF], [HALF,-HALF], [HALF,HALF], [-HALF,HALF], [-HALF,-HALF]]];
+  A.identity   = d => d;
+
+  A.gridPoly = i => {
+    const x = D.cx[i], y = D.cy[i];
+    return [[x-half,y-half], [x+half,y-half], [x+half,y+half], [x-half,y+half]];
+  };
+  A.gridFill = i => {
+    const c = cellColor(i);
+    if (!c) return [42, 46, 55, 90];                    // 건물 내부 · 결측
+    return [c[0], c[1], c[2], picked === i ? 255 : 232];
+  };
+  A.gridLine = i => picked === i ? [255,255,255,255] : [0,0,0,0];
+
+  A.bldPoly = i => D.buildings.poly[i];
+  A.bldElev = i => D.buildings.h[i];
+  // 높이로 명암 — 로그 스케일. 중위 9.6m인데 최고 163m라 선형은 저층을 뭉갠다.
+  // 폭은 좁게 잡는다: 고층을 너무 어둡게 하면 확산광까지 겹쳐 검게 뭉친다.
+  A.bldFill = i => {
+    const h = Math.max(D.buildings.h[i], 3);
+    const u = Math.min(1, Math.log(h / 3) / Math.log(163 / 3));
+    const k = D.buildings.inWindow[i] ? 1 : 0.58;       // 창 밖은 맥락일 뿐이다
+    return [(168 - 38*u) * k, (172 - 39*u) * k, (184 - 36*u) * k];
+  };
+
+  A.onClick = info => { picked = info.index >= 0 ? info.index : null; renderSide(); refresh(); };
+  A.onHover = info => { hoverIdx = info.index >= 0 ? info.index : null; renderTip(info); };
+}
+
+function layers(){
+  const mix = lodMix(viewZoom);        // 0 = 서울 전체 · 1 = 구역 3D
+  const ovA = 1 - mix, dtA = mix;
+
+  // ⓪ 전역 2D — 서울 전체 25m 예측 래스터 (969,212칸)
+  const canvas = ovA > 0.01 ? ovCanvas() : null;
+  const overview = canvas && new BitmapLayer({
+    id: "overview",
+    image: canvas,
+    bounds: OV.bounds,                 // [W, S, E, N] — EPSG:4326으로 재투영해 구웠다
+    opacity: ovA,
+    // ★ 25m 픽셀을 뭉개지 않는다. 「1칸 = 25m」가 이 제안의 주장이라
+    //   확대했을 때 보간으로 부드러워지면 해상도를 실제보다 좋게 보이게 한다.
+    textureParameters: {minFilter: "linear", magFilter: "nearest"},
+    pickable: false,
+  });
+
+  // ⓪-b 서울 자치구 경계 — 방위 감각용
+  const boundary = OV && ovA > 0.01 && new PathLayer({
+    id: "boundary",
+    data: OV.boundary,
+    getPath: A.identity,
+    getColor: [150, 160, 180, Math.round(150 * ovA)],
+    getWidth: 1.4, widthUnits: "pixels", widthMinPixels: 1,
+    pickable: false,
+  });
+
+  // ⓪-c 확대 지점 표식 — 서울 전체에서 600m 창은 20px 정사각형이라 눈에 안 띈다.
+  //     "여기로 들어간다"가 보여야 사다리가 읽힌다.
+  const pin = ovA > 0.01 && new ScatterplotLayer({
+    id: "pin",
+    data: [0],
+    getPosition: () => geo.coordinateOrigin,
+    getRadius: 460, radiusUnits: "meters", radiusMinPixels: 13,
+    stroked: true, filled: false,
+    getLineColor: [240, 168, 0, Math.round(230 * ovA)],
+    getLineWidth: 2.5, lineWidthUnits: "pixels", lineWidthMinPixels: 2,
+    pickable: false,
+  });
+
+  // ① 지면판 — 창 밖 건물의 그림자를 **받아 주는** 판.
+  //    없으면 골목 밖 그림자가 허공에 사라져 태양 방향을 못 읽는다.
+  const ground = new SolidPolygonLayer({
+    id: "ground",
+    ...geo,
+    data: A.groundData,
+    getPolygon: A.identity,
+    getFillColor: [26, 29, 35],
+    // ★ 미세 압출 — 평면 폴리곤은 조명 모듈을 타지 않아 **그림자를 못 받는다**.
+    //   높이를 주면 상면이 조명·그림자 계산에 들어온다.
+    extruded: true, getElevation: 0.05,
+    material: {ambient: .80, diffuse: .40, shininess: 1, specularColor: [0,0,0]},
+  });
+
+  // ② 25m 격자 — 이 데모의 주제
+  const grid = new PolygonLayer({
+    id: "grid",
+    ...geo,
+    data: A.gridIdx,
+    getPolygon: A.gridPoly,
+    getFillColor: A.gridFill,
+    getLineColor: A.gridLine,
+    getLineWidth: 1.6,
+    lineWidthUnits: "meters",
+    stroked: true, filled: true,
+    // ★ 격자도 미세 압출한다 — 같은 이유(그림자 수신)다.
+    //   material.ambient를 높게 잡아 **색상 자체는 거의 변조되지 않게** 한다.
+    //   그림자는 shadowColor 합성이라 별개로 남는다.
+    // ★ ambient 1.0 — 램프 색이 조명에 변조되지 않고 그대로 나와야 범례와 맞는다
+    extruded: true, getElevation: 0.35,
+    material: {ambient: 1.0, diffuse: .12, shininess: 1, specularColor: [0,0,0]},
+    pickable: true, autoHighlight: true, highlightColor: [255,255,255,60],
+    onClick: A.onClick,
+    onHover: A.onHover,
+    updateTriggers: {getFillColor: [dayKey, hour, mode, picked], getLineColor: [picked]},
+  });
+
+  // ③ 건물 — 창 안은 밝게, 창 밖은 어둡게 (맥락일 뿐 주제가 아니다)
+  const bld = new SolidPolygonLayer({
+    id: "buildings",
+    ...geo,
+    data: A.bldIdx,
+    getPolygon: A.bldPoly,
+    getElevation: A.bldElev,
+    getFillColor: A.bldFill,
+    extruded: true, filled: true,
+    material: {ambient: .40, diffuse: .72, shininess: 28, specularColor: [42,42,48]},
+    pickable: false,
+  });
+
+  // ④ 창 경계 600m — 격자가 덮는 범위를 명시한다.
+  //    ★ 전역에서도 보여야 한다 — "어디로 확대되는가"의 표식이다. 600m가
+  //      서울 전체 화면에서는 3px이라 `widthMinPixels`로 최소 굵기를 준다.
+  const frame = new PathLayer({
+    id: "frame",
+    ...geo,
+    data: A.frameData,
+    getPath: A.identity,
+    getColor: [240, 168, 0, 200],
+    getWidth: 2.5, widthUnits: "meters", widthMinPixels: 2,
+    parameters: {depthCompare: "always"},           // 건물에 가려도 보이게
+  });
+
+  // ★ 구역 3D는 멀리서 보면 1.2km짜리 점이다. 안 그리는 게 아니라 **투명도로
+  //   빼야** 줌 중간에 툭 나타나지 않는다. 완전히 투명하면 아예 뺀다 —
+  //   건물 2,862동을 0% 불투명도로 래스터화할 이유가 없다.
+  // ★ 지면판만 더 늦게 떠오르게 한다(dtA³). 전역 래스터 위에 어두운 사각형이
+  //   반쯤 덮이면 전환 구간에서 「구멍」처럼 보인다.
+  const near = dtA > 0.01
+    ? [ground.clone({opacity: dtA ** 3}),
+       grid.clone({opacity: dtA}),
+       bld.clone({opacity: dtA})] : [];
+  return [overview, boundary, pin, ...near, frame].filter(Boolean);
+}
+
+// ── 카메라 ──────────────────────────────────────────────────────────────
+// 600m 창이 화면에 들어오게 줌을 계산한다. 창 크기가 바뀌면 다시 잡는다.
+//
+// ★ 기울이면(pitch) 창의 **앞쪽 절반이 화면 밖으로 밀린다**. 시선축은 target을
+//   지나지만 원근 때문에 가까운 쪽이 커지기 때문이다. 그래서 두 가지를 한다 —
+//   ① 담을 폭을 창(600m)보다 넉넉히 잡고 ② target을 창 중심보다 **북쪽으로**
+//   옮겨 창을 화면 아래쪽 2/3에 앉힌다.
+const SPAN  = +(Q.get("span")  ?? 1620);               // 화면에 담을 지상 폭(m)
+const PITCH = +(Q.get("pitch") ?? 40);
+// ★ 부호 주의 — bearing 0이면 카메라는 target의 **남쪽**에서 북을 본다. target을
+//   남으로 내려야(SHIFT<0) 창이 화면 위로 올라가 아래쪽이 안 잘린다.
+const SHIFT  = +(Q.get("shift")  ?? -60);              // target을 북으로 옮기는 양(m)
+const SHIFTE = +(Q.get("shiftE") ?? 0);                // target을 동으로 옮기는 양(m)
+
+function fitZoom(){
+  const w = Math.max(360, innerWidth), h = Math.max(360, innerHeight);
+  const mPerPx = SPAN / Math.min(w, h * 1.7);
+  const mPerPxAtZ0 = 156543.03392 * Math.cos(D.origin[1] * Math.PI / 180);
+  return Math.log2(mPerPxAtZ0 / mPerPx);
+}
+const initialView = () => ({
+  // 경도 1°의 길이는 위도에 따라 줄어든다 — cos(φ)로 나눈다
+  longitude: D.origin[0] + SHIFTE / (111320 * Math.cos(D.origin[1] * Math.PI / 180)),
+  latitude: D.origin[1] + SHIFT / 111320,              // 위도 1° ≈ 111.32 km
+  zoom: fitZoom(), pitch: PITCH, bearing: +(Q.get("bearing") ?? 0),
+  // ★ minZoom 9 — 서울 전체(37km)까지 물러날 수 있어야 사다리가 성립한다.
+  //   13으로 막아 두면 「서울 전체」 버튼이 도중에 걸린다.
+  minZoom: 9, maxZoom: 20, maxPitch: 78,
+});
+
+// ── 갱신 ────────────────────────────────────────────────────────────────
+function refresh(){
+  deckgl.setProps({layers: layers(), effects: [lighting()]});
+}
+function update(){
+  const s = D.sun[hour];
+  document.getElementById("clock").textContent =
+    String(D.hours[hour]).padStart(2, "0") + "시";
+  document.getElementById("suninfo").innerHTML = s.el > 0
+    ? `태양 고도 <b>${s.el.toFixed(0)}°</b> · 방위 <b>${s.az.toFixed(0)}°</b>`
+    : `일몰 이후 · 고도 ${s.el.toFixed(0)}°`;
+  document.getElementById("slider").value = hour;
+  if (OV && !ovImages.has(`${dayKey}:${hour}`))
+    ovLoad(hour).then(() => refresh()).catch(() => {});
+  refresh();
+  renderSub();
+  renderLegend();
+  renderCompass();
+  syncModeBtn();
+  if (picked !== null) renderSide();
+}
+
+// ★ 전역 지도에는 `hot`·`unc` 래스터가 없다 — 구역 3D의 33℃ 초과 시간은 궤적
+//   200샘플에서 나온 값이라 전역에서 점추정으로 다시 세면 **같은 이름의 다른 양**이
+//   된다 (`build_overview.py` 참조). 그래서 전역에서는 모드 순환을 2개로 줄인다.
+const ORDER_OV = ["dev", "t"];
+const modeOrder = () => (!inDistrict() && OV) ? ORDER_OV : ORDER;
+function syncModeBtn(){
+  const o = modeOrder();
+  if (!o.includes(mode)){ mode = o[0]; }
+  document.getElementById("mode").textContent = MODES[mode].btn;
+  document.getElementById("toSeoul").classList.toggle("on", !inDistrict() && !!OV);
+  document.getElementById("toStreet").classList.toggle("on", inDistrict());
+}
+
+// ── 머리말 — 지금 보고 있는 것이 무엇인지 ───────────────────────────────
+// ★ 두 화면의 「편차」는 **기준이 다르다** (`issue.md` §7-6b).
+//     전역   = 같은 시각 **서울 전역** 옥외 셀 중위 대비 (CLAUDE.md 정의)
+//     구역   = 같은 시각 **창 안** 옥외 셀 중위 대비
+//   같은 이름으로 부르면 광역 편차로 오독한다. 화면마다 기준을 명시한다.
+function renderSub(){
+  const el = document.getElementById("sub");
+  if (!inDistrict() && OV){
+    el.innerHTML =
+      `${OV.day} ${OV.label || ""} · <b>서울 전역</b> 25m 격자 ` +
+      `<b>${OV.cells.toLocaleString()}</b>칸 ` +
+      `<span style="color:var(--dim)">(옥외 ${OV.outdoor.toLocaleString()}) · ` +
+      `기상청 5km 43칸 자리</span>`;
+    return;
+  }
+  const nOut = OUT.length;
+  el.innerHTML =
+    `${D.day} ${D.label || ""} · <b>관악구 600m</b> · 건물 ` +
+    `<b>${D.buildings.poly.length.toLocaleString()}</b>동 · 25m 격자 ` +
+    `<b>${nOut.toLocaleString()}</b>칸 <span style="color:var(--dim)">` +
+    `(건물 내부 ${D.cx.length - nOut}칸 제외)</span>`;
+}
+
+// ── 범례 ────────────────────────────────────────────────────────────────
+function renderLegend(){
+  if (!inDistrict() && OV && OV.ranges[mode]){
+    const L = OV.layers[mode], [lo, hi] = OV.ranges[mode], ramp = OV.ramps[mode];
+    const stops = [];
+    for (let k = 0; k <= 20; k++) stops.push(css(lerpRamp(ramp, k/20)) + ` ${k*5}%`);
+    document.getElementById("legLabel").innerHTML =
+      `${L.label} <span style="color:var(--dim)">(${L.unit}) · 서울 전역</span>`;
+    document.getElementById("bar").style.background =
+      `linear-gradient(90deg, ${stops.join(",")})`;
+    const dg = L.diverging;
+    document.getElementById("ticks").innerHTML =
+      `<span>${lo.toFixed(1)}</span><span>${dg ? "0" : ((lo+hi)/2).toFixed(1)}</span>` +
+      `<span>${dg && hi > 0 ? "+" : ""}${hi.toFixed(1)}</span>`;
+    document.getElementById("legNote").textContent =
+      `${L.note} · 범위 밖 ${OV.clamp[mode].toFixed(1)}%는 양끝 색으로 클램프`
+      + (inTransition() ? " · ⚠ 전환 중 — 골목 격자는 다른 척도다" : "");
+    return;
+  }
+  const M = MODES[mode], [lo, hi] = RANGE[mode];
+  const stops = [];
+  for (let k = 0; k <= 20; k++) stops.push(css(lerpRamp(M.ramp, k/20)) + ` ${k*5}%`);
+  document.getElementById("legLabel").innerHTML =
+    `${M.label} <span style="color:var(--dim)">(${M.unit})</span>`;
+  document.getElementById("bar").style.background =
+    `linear-gradient(90deg, ${stops.join(",")})`;
+  const mid = M.diverging ? "0" : ((lo + hi) / 2).toFixed(M.digits);
+  document.getElementById("ticks").innerHTML =
+    `<span>${lo.toFixed(M.digits)}</span><span>${mid}</span><span>${hi > 0 && M.diverging ? "+" : ""}${hi.toFixed(M.digits)}</span>`;
+  if (degenerate()){
+    document.getElementById("bar").style.background = "rgb(96,104,118)";
+    document.getElementById("ticks").innerHTML =
+      `<span>${lo.toFixed(M.digits)}</span><span></span><span>${hi.toFixed(M.digits)}</span>`;
+    document.getElementById("legNote").textContent =
+      `이 날은 사실상 값이 없다 (폭 ${(hi - lo).toFixed(M.digits)}${M.unit}) — ` +
+      "색으로 칠하면 없는 구조가 보인다";
+    return;
+  }
+  document.getElementById("legNote").textContent =
+    `${M.note} · 범위 밖 ${M.clamp.toFixed(1)}%는 양끝 색으로 클램프`
+    + (inTransition() ? " · ⚠ 전환 중 — 전역 래스터는 다른 척도다" : "");
+}
+
+// ── 나침반 (북 + 태양 방위) ─────────────────────────────────────────────
+function renderCompass(){
+  const s = D.sun[hour], svg = document.querySelector("#compass svg");
+  const R = 34, C = 44;
+  const rad = a => (a - 90) * Math.PI / 180;           // 방위각 → SVG 각
+  const pt = (a, r) => [C + r * Math.cos(rad(a)), C + r * Math.sin(rad(a))];
+  const [sx, sy] = pt(s.az, R - 5);
+  const [ex, ey] = pt((s.az + 180) % 360, R - 11);     // 그림자가 뻗는 쪽
+  const day = s.el > 0;
+  svg.innerHTML = `
+    <circle cx="${C}" cy="${C}" r="${R}" fill="none" stroke="#2b313d" stroke-width="1"/>
+    <text x="${C}" y="12" fill="#98a1b0" font-size="10" text-anchor="middle">N</text>
+    <line x1="${C}" y1="${C-R+3}" x2="${C}" y2="${C-R+10}" stroke="#98a1b0" stroke-width="1.4"/>
+    ${day ? `
+      <line x1="${C}" y1="${C}" x2="${ex}" y2="${ey}" stroke="#4a5261"
+            stroke-width="4" stroke-linecap="round"/>
+      <circle cx="${sx}" cy="${sy}" r="${5 + s.el/16}" fill="#f0a800"/>
+      <line x1="${C}" y1="${C}" x2="${sx}" y2="${sy}" stroke="#f0a800"
+            stroke-width="1" stroke-dasharray="2 2" opacity=".55"/>`
+    : `<circle cx="${C}" cy="${C}" r="4" fill="#39404d"/>`}
+    <circle cx="${C}" cy="${C}" r="2" fill="#98a1b0"/>`;
+  document.getElementById("compassCap").textContent =
+    day ? `그림자 → ${((s.az + 180) % 360).toFixed(0)}°` : "일몰 이후";
+}
+
+// ── 호버 툴팁 ───────────────────────────────────────────────────────────
+function renderTip(info){
+  const el = document.getElementById("tip");
+  if (hoverIdx === null || !info.x){ el.style.display = "none"; return; }
+  const i = hoverIdx, t = D.t[i][hour], d = DEV[i][hour];
+  if (D.in_bld[i]){
+    el.innerHTML = "건물 내부 셀 — 옥외 기온 아님";
+  } else {
+    const h = D.hot[i];
+    el.innerHTML =
+      `<b>${t == null ? "—" : t.toFixed(1) + " ℃"}</b>` +
+      `<span style="color:var(--dim)"> · 창 중위 대비 ${d == null ? "—"
+        : (d >= 0 ? "+" : "") + d.toFixed(2) + "℃"}</span><br>` +
+      `<span style="color:var(--dim)">33℃ 초과 ${h ? h[0].toFixed(1) + "h" : "—"} · 클릭하면 궤적</span>`;
+  }
+  el.style.display = "block";
+  el.style.left = Math.min(info.x + 14, innerWidth - el.offsetWidth - 10) + "px";
+  el.style.top  = Math.min(info.y + 14, innerHeight - el.offsetHeight - 10) + "px";
+}
+
+// ── 팬차트 ──────────────────────────────────────────────────────────────
+function renderFan(i){
+  const c = document.getElementById("fan"), g = c.getContext("2d");
+  const W = c.width, H = c.height, P = {l:44, r:10, t:12, b:26};
+  g.clearRect(0, 0, W, H);
+  const q10 = D.q10[i], q50 = D.q50[i], q90 = D.q90[i];
+  if (!q10 || q50 == null){
+    g.fillStyle = "#98a1b0"; g.font = "20px sans-serif";
+    g.fillText("궤적 분포 없음", 20, H/2); return;
+  }
+  const n = q50.length;
+  let lo = Infinity, hi = -Infinity;
+  for (let k = 0; k < n; k++)
+    if (q10[k] != null){ lo = Math.min(lo, q10[k]); hi = Math.max(hi, q90[k]); }
+  if (!isFinite(lo)) return;
+  lo -= .5; hi += .5;
+  const X = k => P.l + (W - P.l - P.r) * k / (n - 1);
+  const Y = v => P.t + (H - P.t - P.b) * (1 - (v - lo) / (hi - lo));
+
+  g.beginPath();                                        // 80% 예측구간 띠
+  for (let k = 0; k < n; k++) g[k ? "lineTo" : "moveTo"](X(k), Y(q90[k]));
+  for (let k = n - 1; k >= 0; k--) g.lineTo(X(k), Y(q10[k]));
+  g.closePath(); g.fillStyle = "rgba(214,96,77,.30)"; g.fill();
+
+  if (HOT_C > lo && HOT_C < hi){                        // 33℃ 기준선
+    g.setLineDash([6,4]); g.strokeStyle = "#6aa8ff"; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(P.l, Y(HOT_C)); g.lineTo(W - P.r, Y(HOT_C)); g.stroke();
+    g.setLineDash([]);
+    g.fillStyle = "#6aa8ff"; g.font = "18px sans-serif";
+    g.fillText("33℃", P.l + 5, Y(HOT_C) - 5);
+  }
+  g.beginPath();                                        // 중위 궤적
+  for (let k = 0; k < n; k++) g[k ? "lineTo" : "moveTo"](X(k), Y(q50[k]));
+  g.strokeStyle = "#f2f4f8"; g.lineWidth = 3.5; g.stroke();
+
+  g.beginPath();                                        // 현재 시각
+  g.moveTo(X(hour), P.t); g.lineTo(X(hour), H - P.b);
+  g.strokeStyle = "#f0a800"; g.lineWidth = 3; g.stroke();
+
+  g.fillStyle = "#98a1b0"; g.font = "18px sans-serif";
+  g.fillText(hi.toFixed(0) + "℃", 4, P.t + 14);
+  g.fillText(lo.toFixed(0) + "℃", 4, H - P.b - 2);
+  [0, 6, 12, 18, 23].forEach(k => g.fillText(String(D.hours[k]), X(k) - 9, H - 6));
+}
+
+// ── 사이드 패널 ─────────────────────────────────────────────────────────
+function renderSide(){
+  const el = document.getElementById("side");
+  if (picked === null){ el.style.display = "none"; return; }
+  const i = picked, a = D.attr[i], h = D.hot[i];
+  el.style.display = "block";
+  document.getElementById("sideTitle").textContent =
+    `셀 (${D.cx[i].toFixed(0)}, ${D.cy[i].toFixed(0)}) m`;
+  document.getElementById("sideSub").textContent =
+    `창 중심 기준 동/북 오프셋 · 25m 격자` + (D.in_bld[i] ? " · 건물 내부" : "");
+  renderFan(i);
+  const t = D.t[i][hour], d = DEV[i][hour];
+  document.getElementById("attr").innerHTML = `
+    <tr><td>${String(D.hours[hour]).padStart(2,"0")}시 기온</td>
+        <td>${t == null ? "—" : t.toFixed(1) + " ℃"}</td></tr>
+    <tr><td>창 중위 대비</td>
+        <td>${d == null ? "—" : (d >= 0 ? "+" : "") + d.toFixed(2) + " ℃"}</td></tr>
+    <tr><td>33℃ 초과 시간</td>
+        <td>${h ? `<b>${h[0].toFixed(1)}h</b> <span style="color:var(--dim)">(80% ${h[1]}~${h[2]})</span>` : "—"}</td></tr>
+    <tr><td>천공률 SVF</td><td>${a.svf == null ? "—" : a.svf.toFixed(2)}</td></tr>
+    <tr><td>최근접 건물</td><td>${a.dmin == null ? "—" : a.dmin.toFixed(0) + " m"}</td></tr>
+    <tr><td>녹지비</td><td>${a.grn == null ? "—" : a.grn.toFixed(2)}</td></tr>
+    <tr><td>고령인구</td><td>${a.eld.toFixed(1)} 명</td></tr>`;
+  document.getElementById("sideNote").innerHTML = D.in_bld[i]
+    ? "이 셀은 <b>건물 내부</b>다. 보행자가 겪는 온도가 아니므로 지도에서 착색하지 않는다."
+    : "띠는 <b>80% 예측구간</b> (conformal 보정), 굵은 선은 중위 궤적. " +
+      "노란 세로선이 현재 시각.";
+}
+
+// ── 시작 ────────────────────────────────────────────────────────────────
+// ★ 전역 manifest는 **없어도 뜬다**. 구역 3D가 본체이고 전역은 사다리의
+//   윗단이므로, `build_overview.py`를 아직 안 돌린 상태에서도 데모가 죽으면 안 된다.
+//   `days.json`이 없으면 폭염일 하나만 있는 예전 배치로 간주한다.
+const getJSON = (u, must = false) => fetch(u).then(r => {
+  if (r.ok) return r.json();
+  if (must) throw new Error(`${u} ${r.status}`);
+  return null;
+}).catch(e => { if (must) throw e; return null; });
+
+async function boot(){
+  const idx = await getJSON("data/days.json")
+    || {days: [{key: "2026-08-06", label: "폭염일",
+                district: "data/district/2026-08-06.json"}],
+        primary: "2026-08-06"};
+  DAYS = idx;
+
+  for (const d of idx.days){
+    const dist = await getJSON(d.district, true);
+    const ov = await getJSON(`data/overview/${d.key}/manifest.json`);
+    // 창이 같으므로 건물이 같은 좌표여야 한다. 다르면 accessor 재사용이
+    // **조용히 엉뚱한 지오메트리를 그린다** — 그럴 바엔 여기서 죽는 게 낫다.
+    BYDAY[d.key] = {D: dist, OV: ov, label: d.label};
+  }
+
+  const keys = idx.days.map(d => d.key);
+  const ref = BYDAY[keys[0]].D;
+  for (const k of keys.slice(1)){
+    const o = BYDAY[k].D;
+    if (o.cx.length !== ref.cx.length ||
+        o.buildings.poly.length !== ref.buildings.poly.length ||
+        o.cx[0] !== ref.cx[0] || o.cy[0] !== ref.cy[0]){
+      throw new Error(`날짜별 격자·건물이 다르다 (${keys[0]} vs ${k}) — `
+        + "accessor를 공유할 수 없다");
+    }
+  }
+
+  // 날짜별 전처리 — 편차 범위만 빼고 여기서 끝낸다
+  for (const k of keys){
+    const s = BYDAY[k];
+    D = s.D;
+    D.buildings.inWindow = D.buildings.poly.map(p => {
+      let sx = 0, sy = 0;
+      for (const [x, y] of p){ sx += x; sy += y; }
+      return Math.abs(sx / p.length) <= HALF && Math.abs(sy / p.length) <= HALF;
+    });
+    precompute();
+    s.DEV = DEV; s.MED = MED; s.RANGE = RANGE; s.OUT = OUT;
+  }
+
+  // ★ 구역 편차 범위를 **모든 날의 최대 p90**으로 통일한다.
+  //   합집합 분위가 아니라 최대를 쓰는 이유 — 시각 수가 같아 합집합 p90은 두 날의
+  //   중간으로 끌려가고, 그러면 더운 날의 클램프가 과해진다. 최대면 평온일이
+  //   반드시 안에 들어온다. (전역 래스터는 `build_overview.py`가 같은 규칙으로 정한다.)
+  const shared = Math.max(...keys.map(k => BYDAY[k].RANGE.devP90));
+  for (const k of keys){
+    const R = BYDAY[k].RANGE;
+    R.dev = [-shared, shared];
+    let out = 0, tot = 0;
+    const s = BYDAY[k];
+    for (const i of s.OUT) for (let h = 0; h < s.D.hours.length; h++){
+      const v = s.DEV[i][h];
+      if (v == null) continue;
+      tot++; if (Math.abs(v) > shared) out++;
+    }
+    MODES_CLAMP[k] = tot ? 100 * out / tot : 0;
+  }
+
+  activate(idx.primary || keys[0]);
+  // ★ 좌표 원점은 창이 같으므로 날짜와 무관하다. 빠뜨리면 `coordinateOrigin`이
+  //   null인 채로 모든 레이어에 퍼져 렌더가 통째로 죽는다 (실측: 셰이더 모듈에서
+  //   "Cannot read properties of null (reading 'length')").
+  geo.coordinateOrigin = [D.origin[0], D.origin[1], 0];
+  buildAccessors();
+  document.getElementById("loading").remove();
+  renderDayButtons();
+
+  const start = initialView();
+  viewZoom = start.zoom;
+  deckgl = new DeckGL({
+    container: "map",
+    views: new MapView({repeat: false}),
+    initialViewState: start,
+    controller: {dragRotate: true, touchRotate: true, keyboard: false},
+    parameters: {clearColor: [0.051, 0.059, 0.075, 1]},
+    onViewStateChange: ({viewState, interactionState}) => {
+      const s = interactionState || {};
+      if (s.isDragging || s.isPanning || s.isZooming || s.isRotating) userMoved = true;
+      // ★ 줌이 LOD 띠를 지날 때만 다시 그린다. 매 프레임 레이어를 새로 만들면
+      //   전역 래스터 캔버스까지 매번 만지게 된다.
+      const before = lodMix(viewZoom);
+      viewZoom = viewState.zoom;
+      if (Math.abs(lodMix(viewZoom) - before) > 0.01) update();
+    },
+    getCursor: ({isDragging}) => isDragging ? "grabbing" : (hoverIdx !== null ? "pointer" : "grab"),
+    layers: [], effects: [],
+  });
+  if (OV) ovLoad(hour).then(() => refresh()).catch(e => console.warn(e));
+  update();
+}
+
+const MODES_CLAMP = {};      // 날짜별 구역 편차 클램프 %
+
+function activate(key){
+  dayKey = key;
+  const s = BYDAY[key];
+  D = s.D; DEV = s.DEV; MED = s.MED; RANGE = s.RANGE; OUT = s.OUT; OV = s.OV;
+  MODES.dev.clamp = MODES_CLAMP[key] ?? MODES.dev.clamp;
+  picked = null;
+  if (!modeOrder().includes(mode)) mode = modeOrder()[0];
+}
+
+function renderDayButtons(){
+  const box = document.getElementById("days");
+  if (!DAYS || DAYS.days.length < 2){ box.style.display = "none"; return; }
+  box.innerHTML = "";
+  for (const d of DAYS.days){
+    const b = document.createElement("button");
+    b.textContent = d.label;
+    b.className = d.key === dayKey ? "on" : "";
+    b.addEventListener("click", () => {
+      if (d.key === dayKey) return;
+      activate(d.key);
+      renderDayButtons();
+      renderSide();
+      if (OV && !ovImages.has(`${dayKey}:${hour}`))
+        ovLoad(hour).then(() => refresh()).catch(() => {});
+      update();
+    });
+    box.appendChild(b);
+  }
+}
+
+boot().catch(e => {
+  const el = document.getElementById("loading");
+  if (el) el.textContent = "불러오기 실패: " + e.message;
+  console.error(e);
+});
+
+// ── 조작 ────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+$("slider").addEventListener("input", e => { hour = +e.target.value; update(); });
+
+$("play").addEventListener("click", e => {
+  playing = !playing;
+  e.target.classList.toggle("on", playing);
+  e.target.textContent = playing ? "❚❚ 정지" : "▶ 재생";
+  clearInterval(timer);
+  if (playing) timer = setInterval(() => { hour = (hour + 1) % 24; update(); }, 620);
+});
+$("shadow").addEventListener("click", e => {
+  showShadow = !showShadow; e.target.classList.toggle("on", showShadow); update();
+});
+$("mode").addEventListener("click", () => {
+  const o = modeOrder();
+  mode = o[(o.indexOf(mode) + 1) % o.length];
+  update();
+});
+// ★ 「서울 전체 → 골목」 사다리를 버튼 두 개로 잇는다. 이게 fig5의 구조이고
+//   발표에서 가장 먼저 보여줄 동작이다 (전달성 15 · 파급성 20).
+//   `FlyToInterpolator`로 날아가야 **같은 지도라는 것**이 읽힌다 — 순간이동하면
+//   두 개의 다른 그림으로 보인다.
+function flyTo(v){
+  userMoved = false;
+  deckgl.setProps({initialViewState: {
+    ...v, transitionDuration: 1600, transitionInterpolator: new FlyToInterpolator(),
+  }});
+}
+$("toSeoul").addEventListener("click", () => {
+  if (!OV) return;
+  const [W, S, E, N] = OV.bounds;
+  const lat = (S + N) / 2, k = Math.cos(lat * Math.PI / 180);
+  // ★ 가로·세로 **둘 다** 맞춘다. 폭만 맞추면 서울이 37×30km인데 화면이
+  //   가로로 길어서 위아래가 잘린다 (실측: 30.4km 중 24km만 보였다).
+  //   세로 여유를 더 두는 것은 아래 조작 패널과 위 머리말이 지도를 가리기 때문이다.
+  const mPerPx = Math.max(
+    (E - W) * 111320 * k / (Math.max(360, innerWidth) * 0.90),
+    (N - S) * 111320     / (Math.max(360, innerHeight) * 0.78));
+  // ★ 중심을 남쪽으로 조금 내린다. 확대 지점(관악구)이 서울 **남쪽**이라
+  //   정중앙에 맞추면 표식이 하단 조작 패널에 가린다.
+  flyTo({longitude: (W + E) / 2, latitude: lat - (N - S) * 0.07,
+         pitch: 0, bearing: 0,
+         zoom: Math.log2(156543.03392 * k / mPerPx),
+         minZoom: 9, maxZoom: 20, maxPitch: 78});
+});
+$("toStreet").addEventListener("click", () => flyTo(initialView()));
+$("close").addEventListener("click", () => { picked = null; renderSide(); refresh(); });
+
+addEventListener("keydown", e => {
+  if (e.key === "ArrowRight"){ hour = (hour + 1) % 24; update(); }
+  if (e.key === "ArrowLeft"){  hour = (hour + 23) % 24; update(); }
+  if (e.key === " "){ e.preventDefault(); $("play").click(); }
+  if (e.key === "Escape"){ picked = null; renderSide(); refresh(); }
+});
+// ★ 창 크기가 바뀌면 다시 맞추되, **사용자가 이미 시점을 움직였으면 건드리지
+//   않는다**. 전체화면 전환 한 번에 애써 맞춘 시점이 초기화되면 발표가 끊긴다.
+addEventListener("resize", () => {
+  if (deckgl && !userMoved) deckgl.setProps({initialViewState: initialView()});
+});
+</script>
+</body>
+</html>

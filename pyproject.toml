@@ -1,0 +1,54 @@
+[project]
+name = "k-digitaltwin"
+version = "0.1.0"
+
+# ★ Python을 3.12로 고정한다 (`.python-version`과 일치).
+#
+# 상한이 없으면 uv가 **Python 3.14 / win32** 조합까지 해결하려 하고, 그 조합에는
+# geopandas 휠이 없어 `uv add`가 실패한다:
+#   "No solution found ... (markers: python_full_version >= '3.14' and sys_platform == 'win32')
+#    Because geopandas was not found in the package registry"
+#
+# 재현성 측면에서도 고정이 맞다 — 신청서에 쓸 수치가 전부 3.12.13에서 계산됐다.
+requires-python = ">=3.12,<3.13"
+
+# ★ 검증 기준 버전 (2026-08-24, Apple M4 Pro / Python 3.12.13)
+#   numpy 2.5.2 · pandas 3.0.5 · lightgbm 4.7.0 · shapely 2.1.2 · pyproj 3.7.2
+#   geopandas 1.1.4 · rasterio 1.5.1 · pvlib 0.15.2 · scipy 1.18.0
+#   matplotlib 3.11.1 · pykrige 1.7.3 · pyarrow 25.0.1
+# 이 조합에서 `scripts/verify_pipeline.py` 21항목이 통과했다. 버전이 바뀌면 다시 돌린다.
+dependencies = [
+    "geopandas>=1.1.4",
+    "lightgbm>=4.7.0",
+    "matplotlib>=3.11.1",
+    "openpyxl>=3.1.5",
+    "pandas>=3.0.5",
+    "pvlib>=0.15.2",
+    "pyarrow>=25.0.1",
+    "pykrige>=1.7.3",
+    "pyproj>=3.7.2",
+    "python-dotenv>=1.2.3",
+    "rasterio>=1.5.1",
+    "requests>=2.34.2",
+    "shapely>=2.1.2",
+]
+
+# ★ torch는 선택 의존성으로 둔다 — 머신 역할이 다르다.
+#
+#   A5000 서버 (계산)   uv sync --extra fm     ← torch 설치
+#   Mac (데모 표시)     uv sync                ← torch 없음
+#
+# cu121 인덱스에는 macOS 휠이 없으므로 필수 의존성으로 넣으면 Mac에서 `uv sync`가 깨진다.
+[project.optional-dependencies]
+fm = ["torch>=2.5"]
+
+# ★ `--index-url`을 쓰면 안 된다 — 기본 PyPI를 **대체**해서 geopandas를 못 찾는다.
+# `explicit = true`면 이 인덱스는 아래 `tool.uv.sources`가 지정한 패키지에만 쓰이고
+# 나머지는 PyPI에서 그대로 받는다.
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu121" }
