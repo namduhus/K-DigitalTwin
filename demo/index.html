@@ -696,7 +696,7 @@ function renderLegend(){
       `<span>${dg && hi > 0 ? "+" : ""}${hi.toFixed(1)}</span>`;
     document.getElementById("legNote").textContent =
       `${L.note} · 범위 밖 ${OV.clamp[mode].toFixed(1)}%는 양끝 색으로 클램프`
-      + (inTransition() ? " · ⚠ 전환 중 — 골목 격자는 다른 척도다" : "");
+      + (inTransition() ? " · 전환 중 — 골목 격자는 다른 척도다" : "");
     return;
   }
   const M = MODES[mode], [lo, hi] = RANGE[mode];
@@ -720,7 +720,7 @@ function renderLegend(){
   }
   document.getElementById("legNote").textContent =
     `${M.note} · 범위 밖 ${M.clamp.toFixed(1)}%는 양끝 색으로 클램프`
-    + (inTransition() ? " · ⚠ 전환 중 — 전역 래스터는 다른 척도다" : "");
+    + (inTransition() ? " · 전환 중 — 전역 래스터는 다른 척도다" : "");
 }
 
 // ── 나침반 (북 + 태양 방위) ─────────────────────────────────────────────
