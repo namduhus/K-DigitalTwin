@@ -125,3 +125,17 @@ python3 -m http.server 8899 --directory demo     # → http://localhost:8899
 - **온도는 절대 기온인지 동시각 편차인지 반드시 구분한다.** 수치 대부분이 편차(같은 시각 서울 센서 중위와의 차이)다. `−1.36℃`는 영하가 아니라 **중위보다 1.36℃ 시원하다**는 뜻이다. 절대 기온은 여름 데이터라 항상 영상이다
 - **퍼센트는 「개선율」 한 축이다.** `개선 +15.7%` / `악화 −17.1%`처럼 단어를 붙인다
 - **모든 공간 연산은 EPSG:5186(미터)에서 한다.** 서울시 UPIS(5174, Bessel 타원체)는 `pyproj` 정식 변환을 거친다 — 그냥 대입하면 datum shift 100~200m가 조용히 섞인다
+
+---
+
+## 라이선스
+
+| 대상 | 라이선스 | 원문 |
+|---|---|---|
+| 코드 — `scripts/` · `core/` · `demo/index.html` | MIT | [`LICENSE`](LICENSE) |
+| 파생 데이터·그림 — `demo/data/` · `figures/` | CC BY 4.0 | [`LICENSE-DATA`](LICENSE-DATA) |
+| deck.gl 9.0.33 번들 — `demo/vendor/deck.gl.min.js` | MIT (vis.gl contributors) | [`demo/vendor/LICENSE-deck.gl`](demo/vendor/LICENSE-deck.gl) |
+
+**출처** — `demo/data/`와 `figures/`는 위 [활용 데이터](#활용-데이터) 표의 기관이 제공한 공공데이터를 가공한 결과물이다. 공공누리 제1유형 자료는 출처표시 조건에 따라 이용했다. 이 저장소의 데이터·그림을 다시 쓸 때는 이 저장소와 함께 **원 출처 기관도 표시**한다.
+
+원본 데이터는 저장소에 포함하지 않는다. 각 기관에서 직접 받는다 — 경로는 [`scripts/README.md`](scripts/README.md).
